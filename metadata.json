@@ -1,0 +1,7 @@
+{
+  "name": "AuditKas Digital",
+  "description": "A professional Digital Cash Audit application featuring risk planning, automated reconciliation, AI-powered fraud detection, and immutable audit logging visualization.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
