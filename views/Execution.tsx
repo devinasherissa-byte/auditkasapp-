@@ -29,14 +29,19 @@ const parseCSV = (csv: string): Transaction[] => {
     
     // Skip header and map
     return lines.slice(1).map((line, index) => {
+        // Split by comma, handling potential issues naively for now but robust enough for standard CSVs
         const values = line.split(',').map(v => v.trim());
+        
+        // Clean amount: remove currency symbols, commas (assuming thousands separator), keeping dots and minus
+        const cleanAmount = values[3]?.replace(/[^0-9.-]/g, '') || '0';
+        
         return {
             id: values[0] || `UNK-${index}`,
             date: values[1] || new Date().toISOString().split('T')[0],
-            description: values[2] || 'Unknown Transaction',
-            amount: parseFloat(values[3]) || 0,
-            type: (values[4] as 'DEBIT' | 'CREDIT') || 'CREDIT',
-            source: (values[5] as 'LEDGER' | 'BANK') || 'LEDGER',
+            description: values[2]?.replace(/^"|"$/g, '') || 'Unknown Transaction',
+            amount: parseFloat(cleanAmount) || 0,
+            type: (values[4]?.toUpperCase() as 'DEBIT' | 'CREDIT') || 'CREDIT',
+            source: (values[5]?.toUpperCase() as 'LEDGER' | 'BANK') || 'LEDGER',
             status: 'PENDING'
         };
     });
@@ -103,28 +108,47 @@ const Execution: React.FC = () => {
       const ledger = newTransactions.filter(t => t.source === 'LEDGER');
       const bank = newTransactions.filter(t => t.source === 'BANK');
 
+      // Reset statuses first to allow re-run
+      [...ledger, ...bank].forEach(t => {
+          if (t.status === 'MATCHED' || t.status === 'UNMATCHED') {
+              t.status = 'PENDING';
+              t.flagReason = undefined;
+          }
+      });
+
       ledger.forEach(l => {
-        // Step 1: Exact Match
-        const match = bank.find(b => b.amount === l.amount && (b.date === l.date || b.status === 'PENDING') && b.type === l.type && b.status !== 'MATCHED');
+        // Step 1: Strict Match (Amount, Type, Date)
+        let match = bank.find(b => 
+            b.status !== 'MATCHED' && 
+            Math.abs(b.amount - l.amount) < 0.01 && // Float tolerance
+            b.type === l.type && 
+            b.date === l.date
+        );
+
         if (match) {
           l.status = 'MATCHED';
           match.status = 'MATCHED';
         } else {
-             // Step 2: Tolerance (Simplified)
-             const softMatch = bank.find(b => b.amount === l.amount && b.type === l.type && b.status !== 'MATCHED');
-             if (softMatch) {
+             // Step 2: Soft Match (Amount, Type - Ignore Date for Timing Differences)
+             match = bank.find(b => 
+                b.status !== 'MATCHED' && 
+                Math.abs(b.amount - l.amount) < 0.01 && 
+                b.type === l.type
+             );
+             
+             if (match) {
                  l.status = 'MATCHED';
                  l.flagReason = 'Timing Difference (Auto-Resolved)';
-                 softMatch.status = 'MATCHED';
+                 match.status = 'MATCHED';
              } else {
                  l.status = 'UNMATCHED';
              }
         }
       });
       
-      // Mark remaining bank items as unmatched
-      bank.forEach(b => {
-          if (b.status === 'PENDING') b.status = 'UNMATCHED';
+      // Mark remaining pending items as unmatched
+      [...ledger, ...bank].forEach(t => {
+          if (t.status === 'PENDING') t.status = 'UNMATCHED';
       });
 
       setTransactions(newTransactions);
